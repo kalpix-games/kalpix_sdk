@@ -85,6 +85,22 @@ class KalpixClient {
     );
   }
 
+  /// Convenience factory targeting a local development server.
+  ///
+  /// Example:
+  /// ```dart
+  /// final client = KalpixClient.local(host: '192.168.31.243', port: 8080);
+  /// ```
+  factory KalpixClient.local({String host = 'localhost', int port = 8080}) {
+    return KalpixClient(
+      config: KalpixConfig(
+        host: host,
+        port: port,
+        ssl: false,
+      ),
+    );
+  }
+
   /// Attempt to restore a session from persistent storage.
   /// Returns the restored session or null if none exists / it has expired.
   Future<KalpixSession?> restoreSession() async {
