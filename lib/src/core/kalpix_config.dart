@@ -4,10 +4,7 @@
 ///
 /// ```dart
 /// final client = KalpixClient(
-///   config: KalpixConfig(
-///     host: 'api.yourdomain.com',
-///     serverKey: 'your-server-key',
-///   ),
+///   config: KalpixConfig(host: 'api.yourdomain.com'),
 /// );
 /// ```
 class KalpixConfig {
@@ -20,16 +17,12 @@ class KalpixConfig {
   /// Whether to use TLS (HTTPS/WSS). Defaults to `true`.
   final bool ssl;
 
-  /// Server key used to identify this application.
-  final String serverKey;
-
   /// HTTP request timeout in seconds. Defaults to 30.
   final int requestTimeoutSeconds;
 
   /// Creates a [KalpixConfig].
   const KalpixConfig({
     required this.host,
-    required this.serverKey,
     this.port = 443,
     this.ssl = true,
     this.requestTimeoutSeconds = 30,

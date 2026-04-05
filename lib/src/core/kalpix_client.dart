@@ -74,12 +74,11 @@ class KalpixClient {
     avatar = AvatarApi(http: _http);
   }
 
-  /// Convenience factory with production Kalpix server settings.
-  factory KalpixClient.production({required String serverKey}) {
+  /// Convenience factory targeting the production Kalpix server.
+  factory KalpixClient.production() {
     return KalpixClient(
-      config: KalpixConfig(
+      config: const KalpixConfig(
         host: 'api.kalpixsoftware.com',
-        serverKey: serverKey,
         port: 443,
         ssl: true,
       ),

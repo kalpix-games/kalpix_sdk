@@ -20,8 +20,7 @@ void main() {
 /// Create one client for the lifetime of the app.
 final client = KalpixClient(
   config: KalpixConfig(
-    host: 'api.yourdomain.com', // replace with your server host
-    serverKey: 'your-server-key',
+    host: 'api.kalpixsoftware.com',
     port: 443,
     ssl: true,
   ),

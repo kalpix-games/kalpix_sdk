@@ -43,17 +43,16 @@ import 'package:kalpix_sdk/kalpix_sdk.dart';
 final client = KalpixClient(
   config: KalpixConfig(
     host: 'api.yourdomain.com',
-    serverKey: 'your-server-key',
     port: 443,
     ssl: true,
   ),
 );
 ```
 
-Or use the production preset:
+Or use the production preset (targets `api.kalpixsoftware.com`):
 
 ```dart
-final client = KalpixClient.production(serverKey: 'your-server-key');
+final client = KalpixClient.production();
 ```
 
 ### 2. Restore a saved session on startup
