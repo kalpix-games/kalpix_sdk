@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'kalpix_config.dart';
 import 'kalpix_exception.dart';
 import 'kalpix_session.dart';
+import 'match_models.dart';
 import 'rpc_response.dart';
 
 typedef SocketMessageHandler = void Function(Map<String, dynamic> message);
@@ -20,11 +22,16 @@ class KalpixSocketClient {
   bool _connected = false;
 
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
+  final _matchDataController = StreamController<KalpixMatchData>.broadcast();
   final _pendingRequests = <String, Completer<Map<String, dynamic>>>{};
 
   int _cidCounter = 0;
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
+
+  /// Stream of real-time match data payloads.
+  Stream<KalpixMatchData> get onMatchData => _matchDataController.stream;
+
   bool get isConnected => _connected;
 
   KalpixSocketClient({required this.config});
@@ -72,6 +79,52 @@ class KalpixSocketClient {
     await _channel?.sink.close();
     _channel = null;
     _failPending('Disconnected');
+  }
+
+  /// Join a real-time match by match ID.
+  Future<KalpixMatch> joinMatch(String matchId) async {
+    _assertConnected();
+    final cid = _nextCid();
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingRequests[cid] = completer;
+
+    _channel!.sink.add(jsonEncode({
+      'cid': cid,
+      'match_join': {'match_id': matchId},
+    }));
+
+    final result = await completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        _pendingRequests.remove(cid);
+        throw KalpixSocketException(message: 'joinMatch "$matchId" timed out');
+      },
+    );
+    return KalpixMatch.fromMap(result['match'] as Map<String, dynamic>? ?? result);
+  }
+
+  /// Leave a real-time match.
+  Future<void> leaveMatch(String matchId) async {
+    if (!_connected || _channel == null) return;
+    _channel!.sink.add(jsonEncode({
+      'match_leave': {'match_id': matchId},
+    }));
+  }
+
+  /// Send binary/JSON data to a match with a given op-code.
+  void sendMatchData({
+    required String matchId,
+    required int opCode,
+    required Uint8List data,
+  }) {
+    _assertConnected();
+    _channel!.sink.add(jsonEncode({
+      'match_data_send': {
+        'match_id': matchId,
+        'op_code': opCode,
+        'data': base64Encode(data),
+      },
+    }));
   }
 
   /// Send an RPC call over the WebSocket and await the correlated response.
@@ -147,6 +200,19 @@ class KalpixSocketClient {
       return;
     }
 
+    // Real-time match data push from server
+    if (envelope.containsKey('match_data')) {
+      final md = envelope['match_data'] as Map<String, dynamic>;
+      final rawData = md['data'] as String? ?? '';
+      final bytes = rawData.isNotEmpty ? base64Decode(rawData) : Uint8List(0);
+      _matchDataController.add(KalpixMatchData(
+        matchId: md['match_id'] as String? ?? '',
+        opCode: (md['op_code'] as num?)?.toInt() ?? 0,
+        data: bytes,
+      ));
+      return;
+    }
+
     // Broadcast push (chat message, notification, etc.)
     _messageController.add(envelope);
   }
@@ -169,5 +235,6 @@ class KalpixSocketClient {
   void dispose() {
     disconnect();
     _messageController.close();
+    _matchDataController.close();
   }
 }

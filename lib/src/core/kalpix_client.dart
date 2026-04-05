@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import '../auth/auth_api.dart';
 import '../avatar/avatar_api.dart';
@@ -10,6 +11,7 @@ import 'http_client.dart';
 import 'kalpix_config.dart';
 import 'kalpix_exception.dart';
 import 'kalpix_session.dart';
+import 'match_models.dart';
 import 'session_store.dart';
 import 'socket_client.dart';
 
@@ -51,6 +53,9 @@ class KalpixClient {
 
   /// Stream of all raw push messages received over the WebSocket.
   Stream<Map<String, dynamic>> get onMessage => _socket.messages;
+
+  /// Stream of real-time match data payloads.
+  Stream<KalpixMatchData> get onMatchData => _socket.onMatchData;
 
   KalpixSession? get session => _session;
   bool get isAuthenticated => _session != null && !_session!.isExpired;
@@ -134,6 +139,25 @@ class KalpixClient {
   /// Call an RPC over the WebSocket connection.
   Future<Map<String, dynamic>> callSocketRpc(String functionId, Map<String, dynamic> payload) async {
     return _socket.rpc(functionId, payload);
+  }
+
+  /// Join a real-time match by match ID.
+  Future<KalpixMatch> joinMatch(String matchId) async {
+    return _socket.joinMatch(matchId);
+  }
+
+  /// Leave a real-time match.
+  Future<void> leaveMatch(String matchId) async {
+    await _socket.leaveMatch(matchId);
+  }
+
+  /// Send binary data to a match with a given op-code.
+  void sendMatchData({
+    required String matchId,
+    required int opCode,
+    required Uint8List data,
+  }) {
+    _socket.sendMatchData(matchId: matchId, opCode: opCode, data: data);
   }
 
   KalpixSession _requireSession() {

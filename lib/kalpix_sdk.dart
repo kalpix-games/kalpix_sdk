@@ -11,6 +11,7 @@ export 'src/core/kalpix_client.dart';
 export 'src/core/kalpix_config.dart';
 export 'src/core/kalpix_session.dart';
 export 'src/core/kalpix_exception.dart';
+export 'src/core/match_models.dart';
 export 'src/core/socket_client.dart' show KalpixSocketClient;
 
 // Domain APIs (re-exported so callers can type-hint them)
