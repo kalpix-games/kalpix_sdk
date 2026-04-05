@@ -1,0 +1,17 @@
+name: kalpix_sdk_example
+description: Demonstrates usage of the kalpix_sdk package.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.10.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  kalpix_sdk:
+    path: ../
+
+flutter:
+  uses-material-design: true

@@ -1,12 +1,29 @@
-/// Represents an authenticated session with the Kalpix backend.
+/// An authenticated session returned by the Kalpix backend after a successful
+/// login. Holds JWT tokens and their expiry times.
+///
+/// Sessions are persisted automatically by [KalpixClient] via
+/// [SessionStore] and can be restored on startup with
+/// `KalpixClient.restoreSession()`.
 class KalpixSession {
+  /// The short-lived JWT bearer token used in `Authorization` headers.
   final String token;
+
+  /// The long-lived refresh token used to obtain a new [token] when it expires.
   final String refreshToken;
+
+  /// The authenticated user's ID.
   final String userId;
+
+  /// The authenticated user's username.
   final String username;
+
+  /// When [token] expires.
   final DateTime expiresAt;
+
+  /// When [refreshToken] expires.
   final DateTime refreshExpiresAt;
 
+  /// Creates a [KalpixSession].
   const KalpixSession({
     required this.token,
     required this.refreshToken,
@@ -16,10 +33,13 @@ class KalpixSession {
     required this.refreshExpiresAt,
   });
 
+  /// Returns `true` if [token] has expired.
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 
+  /// Returns `true` if [refreshToken] has expired.
   bool get isRefreshExpired => DateTime.now().isAfter(refreshExpiresAt);
 
+  /// Deserialises a session from a map (e.g. stored JSON or an API response).
   factory KalpixSession.fromMap(Map<String, dynamic> map) {
     return KalpixSession(
       token: map['token'] as String? ?? '',
@@ -31,6 +51,7 @@ class KalpixSession {
     );
   }
 
+  /// Serialises the session to a map suitable for JSON storage.
   Map<String, dynamic> toMap() => {
     'token': token,
     'refresh_token': refreshToken,
@@ -40,6 +61,7 @@ class KalpixSession {
     'refresh_expires_at': refreshExpiresAt.millisecondsSinceEpoch,
   };
 
+  /// Returns a copy of this session with the given fields replaced.
   KalpixSession copyWith({
     String? token,
     String? refreshToken,
