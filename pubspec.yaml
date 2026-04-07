@@ -3,7 +3,7 @@ description: >-
   Official Flutter SDK for the Kalpix backend. Provides typed APIs for
   authentication, real-time chat, social graph, store/economy, game
   matchmaking, and avatar management over HTTP and WebSocket.
-version: 0.2.0
+version: 0.3.0
 homepage: https://github.com/kalpix-games/kalpix_sdk
 repository: https://github.com/kalpix-games/kalpix_sdk
 issue_tracker: https://github.com/kalpix-games/kalpix_sdk/issues
