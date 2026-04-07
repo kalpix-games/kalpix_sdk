@@ -20,12 +20,16 @@ class KalpixConfig {
   /// HTTP request timeout in seconds. Defaults to 30.
   final int requestTimeoutSeconds;
 
+  /// WebSocket path prefix. Empty string means the WS URL will be `/ws`.
+  final String wsPathPrefix;
+
   /// Creates a [KalpixConfig].
   const KalpixConfig({
     required this.host,
     this.port = 443,
     this.ssl = true,
     this.requestTimeoutSeconds = 30,
+    this.wsPathPrefix = '',
   });
 
   /// Base URL for HTTP RPC calls (e.g. `https://api.yourdomain.com`).
@@ -46,5 +50,5 @@ class KalpixConfig {
   String buildRpcUrl(String functionId) => '$baseHttpUrl/api/v1/$functionId';
 
   /// Builds the WebSocket URL with the session token embedded as a query param.
-  String buildWsUrl(String token) => '$baseWsUrl/v2/ws?token=$token';
+  String buildWsUrl(String token) => '$baseWsUrl$wsPathPrefix/ws?token=$token';
 }

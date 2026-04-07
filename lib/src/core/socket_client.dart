@@ -12,8 +12,11 @@ typedef SocketMessageHandler = void Function(Map<String, dynamic> message);
 
 /// WebSocket client for real-time communication with the Kalpix backend.
 ///
-/// Matches the cid-based correlation the backend uses for request/response
-/// matching over a single WebSocket connection.
+/// Uses the backend's type-discriminated envelope protocol:
+///   Client sends:  {"type": "<msg_type>", "cid": "1", "<msg_type>": {...}}
+///   Server sends:  {"type": "<msg_type>", "cid": "1", "<msg_type>": {...}}
+///
+/// CID-based correlation is used for request/response matching.
 class KalpixSocketClient {
   final KalpixConfig config;
 
@@ -23,6 +26,8 @@ class KalpixSocketClient {
 
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _matchDataController = StreamController<KalpixMatchData>.broadcast();
+  final _matchPresenceController =
+      StreamController<KalpixMatchPresenceEvent>.broadcast();
   final _pendingRequests = <String, Completer<Map<String, dynamic>>>{};
 
   int _cidCounter = 0;
@@ -31,6 +36,10 @@ class KalpixSocketClient {
 
   /// Stream of real-time match data payloads.
   Stream<KalpixMatchData> get onMatchData => _matchDataController.stream;
+
+  /// Stream of match presence events (players joining/leaving).
+  Stream<KalpixMatchPresenceEvent> get onMatchPresence =>
+      _matchPresenceController.stream;
 
   bool get isConnected => _connected;
 
@@ -65,7 +74,8 @@ class KalpixSocketClient {
 
     await completer.future.timeout(
       const Duration(seconds: 10),
-      onTimeout: () => throw const KalpixSocketException(message: 'WebSocket connection timed out'),
+      onTimeout: () => throw const KalpixSocketException(
+          message: 'WebSocket connection timed out'),
     );
 
     _connected = true;
@@ -88,10 +98,11 @@ class KalpixSocketClient {
     final completer = Completer<Map<String, dynamic>>();
     _pendingRequests[cid] = completer;
 
-    _channel!.sink.add(jsonEncode({
+    _send({
+      'type': 'match_join',
       'cid': cid,
       'match_join': {'match_id': matchId},
-    }));
+    });
 
     final result = await completer.future.timeout(
       const Duration(seconds: 15),
@@ -100,15 +111,20 @@ class KalpixSocketClient {
         throw KalpixSocketException(message: 'joinMatch "$matchId" timed out');
       },
     );
-    return KalpixMatch.fromMap(result['match'] as Map<String, dynamic>? ?? result);
+
+    // Server responds with type=match_joined; we extract the match_joined payload
+    final matchJoined =
+        result['match_joined'] as Map<String, dynamic>? ?? result;
+    return KalpixMatch.fromMap(matchJoined);
   }
 
   /// Leave a real-time match.
   Future<void> leaveMatch(String matchId) async {
     if (!_connected || _channel == null) return;
-    _channel!.sink.add(jsonEncode({
+    _send({
+      'type': 'match_leave',
       'match_leave': {'match_id': matchId},
-    }));
+    });
   }
 
   /// Send binary/JSON data to a match with a given op-code.
@@ -118,33 +134,33 @@ class KalpixSocketClient {
     required Uint8List data,
   }) {
     _assertConnected();
-    _channel!.sink.add(jsonEncode({
-      'match_data_send': {
+    _send({
+      'type': 'match_data',
+      'match_data': {
         'match_id': matchId,
         'op_code': opCode,
         'data': base64Encode(data),
       },
-    }));
+    });
   }
 
   /// Send an RPC call over the WebSocket and await the correlated response.
-  Future<Map<String, dynamic>> rpc(String functionId, Map<String, dynamic> payload) async {
+  Future<Map<String, dynamic>> rpc(
+      String functionId, Map<String, dynamic> payload) async {
     _assertConnected();
 
     final cid = _nextCid();
     final completer = Completer<Map<String, dynamic>>();
     _pendingRequests[cid] = completer;
 
-    final envelope = {
-      'type': 'rpc',
+    _send({
+      'type': 'rpc_request',
       'cid': cid,
-      'rpc': {
+      'rpc_request': {
         'id': functionId,
         'payload': jsonEncode(payload),
       },
-    };
-
-    _channel!.sink.add(jsonEncode(envelope));
+    });
 
     return completer.future.timeout(
       const Duration(seconds: 30),
@@ -155,6 +171,8 @@ class KalpixSocketClient {
     );
   }
 
+  // ── Incoming message handler ─────────────────────────────────────────────
+
   void _handleIncoming(String raw) {
     Map<String, dynamic> envelope;
     try {
@@ -163,58 +181,249 @@ class KalpixSocketClient {
       return;
     }
 
-    // Correlated RPC response
+    final type = envelope['type'] as String? ?? '';
     final cid = envelope['cid'] as String?;
+
+    // ── Correlated request/response (has CID) ──
     if (cid != null && _pendingRequests.containsKey(cid)) {
       final completer = _pendingRequests.remove(cid)!;
 
-      final rpcField = envelope['rpc'] as Map<String, dynamic>?;
-      if (rpcField != null) {
-        final payloadStr = rpcField['payload'] as String?;
-        Map<String, dynamic> payloadMap = {};
-        if (payloadStr != null && payloadStr.isNotEmpty) {
-          try {
-            payloadMap = jsonDecode(payloadStr) as Map<String, dynamic>;
-          } catch (_) {
-            payloadMap = {'raw': payloadStr};
-          }
-        }
-        final rpcResponse = RpcResponse.parse(payloadMap);
-        if (rpcResponse.isError) {
+      switch (type) {
+        case 'rpc_response':
+          _completeRpc(completer, envelope);
+          return;
+
+        case 'match_joined':
+          // Return the full envelope so joinMatch() can extract match_joined
+          completer.complete(envelope);
+          return;
+
+        case 'error':
+          final err = envelope['error'] as Map<String, dynamic>?;
           completer.completeError(KalpixException(
-            errorCode: rpcResponse.errorCode ?? KalpixException.internalError,
-            message: rpcResponse.errorMessage.isNotEmpty ? rpcResponse.errorMessage : 'RPC error',
+            errorCode:
+                err?['code'] as int? ?? KalpixException.internalError,
+            message: err?['message'] as String? ?? 'Unknown error',
           ));
-        } else {
-          completer.complete(rpcResponse.formattedData);
-        }
-      } else if (envelope['error'] != null) {
-        final err = envelope['error'] as Map<String, dynamic>;
-        completer.completeError(KalpixException(
-          errorCode: err['code'] as int? ?? KalpixException.internalError,
-          message: err['message'] as String? ?? 'Unknown error',
-        ));
-      } else {
-        completer.complete({});
+          return;
+
+        case 'pong':
+          completer.complete({});
+          return;
+
+        default:
+          // Unknown correlated response — complete with full envelope
+          completer.complete(envelope);
+          return;
       }
+    }
+
+    // ── Server-initiated push messages (no CID) ──
+    switch (type) {
+      case 'match_data':
+        _handleMatchData(envelope);
+        return;
+
+      case 'match_presence_event':
+        _handleMatchPresence(envelope);
+        return;
+
+      case 'stream_data':
+        _handleStreamData(envelope);
+        return;
+
+      case 'notification':
+        _handleNotification(envelope);
+        return;
+
+      case 'stream_presence_event':
+      case 'presence_update':
+        // Broadcast push — forward to the messages stream
+        _messageController.add(envelope);
+        return;
+
+      case 'error':
+        // Uncorrelated error (server-initiated)
+        _messageController.add(envelope);
+        return;
+
+      case 'pong':
+        // Ignore unsolicited pong
+        return;
+
+      default:
+        // Forward any unrecognised push message
+        _messageController.add(envelope);
+        return;
+    }
+  }
+
+  void _completeRpc(
+      Completer<Map<String, dynamic>> completer, Map<String, dynamic> envelope) {
+    final rpcField = envelope['rpc_response'] as Map<String, dynamic>?;
+    if (rpcField == null) {
+      completer.complete({});
       return;
     }
 
-    // Real-time match data push from server
-    if (envelope.containsKey('match_data')) {
-      final md = envelope['match_data'] as Map<String, dynamic>;
-      final rawData = md['data'] as String? ?? '';
-      final bytes = rawData.isNotEmpty ? base64Decode(rawData) : Uint8List(0);
-      _matchDataController.add(KalpixMatchData(
-        matchId: md['match_id'] as String? ?? '',
-        opCode: (md['op_code'] as num?)?.toInt() ?? 0,
-        data: bytes,
+    final payloadStr = rpcField['payload'] as String?;
+    Map<String, dynamic> payloadMap = {};
+    if (payloadStr != null && payloadStr.isNotEmpty) {
+      try {
+        payloadMap = jsonDecode(payloadStr) as Map<String, dynamic>;
+      } catch (_) {
+        payloadMap = {'raw': payloadStr};
+      }
+    }
+
+    final rpcResponse = RpcResponse.parse(payloadMap);
+    if (rpcResponse.isError) {
+      completer.completeError(KalpixException(
+        errorCode: rpcResponse.errorCode ?? KalpixException.internalError,
+        message: rpcResponse.errorMessage.isNotEmpty
+            ? rpcResponse.errorMessage
+            : 'RPC error',
       ));
+    } else {
+      completer.complete(rpcResponse.formattedData);
+    }
+  }
+
+  /// Unwrap a `stream_data` envelope.
+  ///
+  /// The backend sends: `{"type":"stream_data","stream_data":{"data":"<json>","sender":{...},...}}`
+  /// The `data` field is a JSON-encoded string containing the actual payload
+  /// (e.g. `{"type":"new_message","message":{...}}`).
+  ///
+  /// We parse it and forward the inner payload to the messages stream so that
+  /// consumers (ChatMessageListenerService) can process it directly without
+  /// knowing about the stream_data wrapper.
+  void _handleStreamData(Map<String, dynamic> envelope) {
+    final sd = envelope['stream_data'] as Map<String, dynamic>?;
+    if (sd == null) {
+      _messageController.add(envelope);
       return;
     }
 
-    // Broadcast push (chat message, notification, etc.)
-    _messageController.add(envelope);
+    final dataStr = sd['data'] as String?;
+    if (dataStr == null || dataStr.isEmpty) {
+      _messageController.add(envelope);
+      return;
+    }
+
+    try {
+      final inner = jsonDecode(dataStr);
+      if (inner is Map<String, dynamic>) {
+        _messageController.add(inner);
+      } else {
+        _messageController.add(<String, dynamic>{'data': inner});
+      }
+    } catch (_) {
+      // Not valid JSON — forward raw
+      _messageController.add(sd);
+    }
+  }
+
+  /// Unwrap a `notification` envelope.
+  ///
+  /// The backend sends:
+  /// ```json
+  /// {"type":"notification","notification":{"notifications":[
+  ///   {"subject":"chat_message","content":{"type":"new_message","message":{...}},...}
+  /// ]}}
+  /// ```
+  ///
+  /// Each notification item's `content` field contains the actual chat payload
+  /// (e.g. `{"type":"new_message",...}` or `{"type":"typing_indicator",...}`).
+  /// We extract and forward each one so that ChatMessageListenerService can
+  /// process them directly.
+  void _handleNotification(Map<String, dynamic> envelope) {
+    final notif = envelope['notification'] as Map<String, dynamic>?;
+    if (notif == null) {
+      _messageController.add(envelope);
+      return;
+    }
+
+    final items = notif['notifications'] as List?;
+    if (items == null || items.isEmpty) {
+      _messageController.add(envelope);
+      return;
+    }
+
+    for (final item in items) {
+      if (item is! Map<String, dynamic>) continue;
+      final content = item['content'];
+      if (content is Map<String, dynamic> && content.containsKey('type')) {
+        // Add 'via' marker so listeners know this came through notifications
+        // (used for notification display decisions).
+        content['via'] = 'notification';
+        _messageController.add(content);
+      } else if (content is String && content.isNotEmpty) {
+        // Content might be a JSON string in some cases.
+        try {
+          final parsed = jsonDecode(content);
+          if (parsed is Map<String, dynamic>) {
+            parsed['via'] = 'notification';
+            _messageController.add(parsed);
+          }
+        } catch (_) {
+          // Not parseable — forward the whole item
+          _messageController.add(item);
+        }
+      } else {
+        _messageController.add(item);
+      }
+    }
+  }
+
+  void _handleMatchData(Map<String, dynamic> envelope) {
+    final md = envelope['match_data'] as Map<String, dynamic>?;
+    if (md == null) return;
+
+    final rawData = md['data'];
+    Uint8List bytes;
+    if (rawData is String && rawData.isNotEmpty) {
+      bytes = base64Decode(rawData);
+    } else if (rawData is List) {
+      bytes = Uint8List.fromList(rawData.cast<int>());
+    } else {
+      bytes = Uint8List(0);
+    }
+
+    _matchDataController.add(KalpixMatchData(
+      matchId: md['match_id'] as String? ?? '',
+      opCode: (md['op_code'] as num?)?.toInt() ?? 0,
+      data: bytes,
+    ));
+  }
+
+  void _handleMatchPresence(Map<String, dynamic> envelope) {
+    final mp = envelope['match_presence_event'] as Map<String, dynamic>?;
+    if (mp == null) return;
+
+    _matchPresenceController.add(KalpixMatchPresenceEvent(
+      matchId: mp['match_id'] as String? ?? '',
+      joins: _parsePresences(mp['joins']),
+      leaves: _parsePresences(mp['leaves']),
+    ));
+  }
+
+  static List<KalpixUserPresence> _parsePresences(dynamic list) {
+    if (list is! List) return [];
+    return list
+        .cast<Map<String, dynamic>>()
+        .map((p) => KalpixUserPresence(
+              userId: p['user_id'] as String? ?? '',
+              sessionId: p['session_id'] as String? ?? '',
+              username: p['username'] as String? ?? '',
+            ))
+        .toList();
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  void _send(Map<String, dynamic> envelope) {
+    _channel!.sink.add(jsonEncode(envelope));
   }
 
   void _assertConnected() {
@@ -236,5 +445,6 @@ class KalpixSocketClient {
     disconnect();
     _messageController.close();
     _matchDataController.close();
+    _matchPresenceController.close();
   }
 }

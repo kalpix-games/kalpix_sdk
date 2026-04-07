@@ -57,6 +57,10 @@ class KalpixClient {
   /// Stream of real-time match data payloads.
   Stream<KalpixMatchData> get onMatchData => _socket.onMatchData;
 
+  /// Stream of match presence events (players joining/leaving).
+  Stream<KalpixMatchPresenceEvent> get onMatchPresence =>
+      _socket.onMatchPresence;
+
   KalpixSession? get session => _session;
   bool get isAuthenticated => _session != null && !_session!.isExpired;
   bool get isSocketConnected => _socket.isConnected;
@@ -91,12 +95,13 @@ class KalpixClient {
   /// ```dart
   /// final client = KalpixClient.local(host: '192.168.31.243', port: 8080);
   /// ```
-  factory KalpixClient.local({String host = 'localhost', int port = 8080}) {
+  factory KalpixClient.local({String host = 'localhost', int port = 80}) {
     return KalpixClient(
       config: KalpixConfig(
         host: host,
         port: port,
         ssl: false,
+        wsPathPrefix: '',
       ),
     );
   }
