@@ -40,25 +40,32 @@ class KalpixSession {
   bool get isRefreshExpired => DateTime.now().isAfter(refreshExpiresAt);
 
   /// Deserialises a session from a map (e.g. stored JSON or an API response).
+  ///
+  /// Accepts both Go backend camelCase keys (`sessionToken`, `expiresAt`) and
+  /// legacy/persisted snake_case keys (`token`, `expires_at`).
   factory KalpixSession.fromMap(Map<String, dynamic> map) {
     return KalpixSession(
-      token: map['token'] as String? ?? '',
-      refreshToken: map['refresh_token'] as String? ?? '',
-      userId: map['user_id'] as String? ?? '',
+      token: map['sessionToken'] as String? ?? map['token'] as String? ?? '',
+      refreshToken: map['refreshToken'] as String? ?? map['refresh_token'] as String? ?? '',
+      userId: map['userId'] as String? ?? map['user_id'] as String? ?? '',
       username: map['username'] as String? ?? '',
-      expiresAt: _parseTime(map['expires_at']),
-      refreshExpiresAt: _parseTime(map['refresh_expires_at']),
+      expiresAt: _parseTime(map['expiresAt'] ?? map['expires_at']),
+      refreshExpiresAt: _parseTime(map['refreshExpiresAt'] ?? map['refresh_expires_at']),
     );
   }
 
   /// Serialises the session to a map suitable for JSON storage.
+  ///
+  /// Uses the same camelCase keys the Go backend sends so that
+  /// `fromMap(toMap())` round-trips correctly. Timestamps are persisted as
+  /// Unix **seconds** (matching the backend convention).
   Map<String, dynamic> toMap() => {
-    'token': token,
-    'refresh_token': refreshToken,
-    'user_id': userId,
+    'sessionToken': token,
+    'refreshToken': refreshToken,
+    'userId': userId,
     'username': username,
-    'expires_at': expiresAt.millisecondsSinceEpoch,
-    'refresh_expires_at': refreshExpiresAt.millisecondsSinceEpoch,
+    'expiresAt': expiresAt.millisecondsSinceEpoch ~/ 1000,
+    'refreshExpiresAt': refreshExpiresAt.millisecondsSinceEpoch ~/ 1000,
   };
 
   /// Returns a copy of this session with the given fields replaced.
@@ -80,10 +87,25 @@ class KalpixSession {
     );
   }
 
+  /// Parse a timestamp that may be Unix seconds (from Go backend), Unix
+  /// milliseconds (from older persisted sessions), or an ISO-8601 string.
+  ///
+  /// Heuristic: values below 1e12 (~Nov 2001 in ms, but ~33,658 AD in seconds)
+  /// are treated as seconds; values >= 1e12 are treated as milliseconds.
   static DateTime _parseTime(dynamic value) {
     if (value == null) return DateTime.now().add(const Duration(hours: 1));
-    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
-    if (value is String) return DateTime.tryParse(value) ?? DateTime.now().add(const Duration(hours: 1));
+    if (value is int) {
+      if (value < 1000000000000) {
+        // Unix seconds (Go backend sends this)
+        return DateTime.fromMillisecondsSinceEpoch(value * 1000);
+      }
+      // Unix milliseconds (legacy persisted sessions)
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is String) {
+      return DateTime.tryParse(value) ??
+          DateTime.now().add(const Duration(hours: 1));
+    }
     return DateTime.now().add(const Duration(hours: 1));
   }
 }

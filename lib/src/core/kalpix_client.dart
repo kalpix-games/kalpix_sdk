@@ -76,6 +76,9 @@ class KalpixClient {
     store = StoreApi(http: _http);
     game = GameApi(http: _http);
     avatar = AvatarApi(http: _http);
+
+    // Wire automatic token refresh: on 401, attempt to refresh session.
+    _http.onTokenRefresh = _refreshSession;
   }
 
   /// Convenience factory targeting the production Kalpix server.
@@ -123,6 +126,7 @@ class KalpixClient {
   /// Set the active session manually (e.g., after login).
   void setSession(KalpixSession session) {
     _session = session;
+    _socket.updateSession(session);
     _sessionChangeController.add(_session);
   }
 
@@ -178,6 +182,31 @@ class KalpixClient {
     required Uint8List data,
   }) {
     _socket.sendMatchData(matchId: matchId, opCode: opCode, data: data);
+  }
+
+  /// Attempt to refresh the current session using the refresh token.
+  ///
+  /// Called automatically by [KalpixHttpClient] when it receives a 401.
+  /// Returns the new session on success, or `null` if refresh fails (caller
+  /// should surface the original 401 to the UI).
+  Future<KalpixSession?> _refreshSession() async {
+    final current = _session;
+    if (current == null || current.refreshToken.isEmpty) return null;
+    if (current.isRefreshExpired) return null;
+
+    try {
+      // Use callPublic to avoid infinite 401→refresh loops.
+      final data = await _http.callPublic('auth/refresh_session', {
+        'refreshToken': current.refreshToken,
+      });
+      final refreshed = KalpixSession.fromMap(data);
+      _session = refreshed;
+      await _sessionStore.save(refreshed);
+      _sessionChangeController.add(refreshed);
+      return refreshed;
+    } catch (_) {
+      return null;
+    }
   }
 
   KalpixSession _requireSession() {

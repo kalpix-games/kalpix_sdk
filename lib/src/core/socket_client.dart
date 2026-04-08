@@ -32,6 +32,25 @@ class KalpixSocketClient {
 
   int _cidCounter = 0;
 
+  /// Whether automatic reconnection is enabled.
+  bool autoReconnect = true;
+
+  /// The session used for the current/last connection.
+  KalpixSession? _lastSession;
+
+  /// Current backoff delay for reconnection.
+  Duration _reconnectDelay = const Duration(seconds: 1);
+  static const _maxReconnectDelay = Duration(seconds: 30);
+  static const _initialReconnectDelay = Duration(seconds: 1);
+  Timer? _reconnectTimer;
+
+  /// Whether we are in the middle of a reconnection attempt.
+  bool _reconnecting = false;
+
+  /// Fired when a reconnection attempt succeeds.
+  final _reconnectedController = StreamController<void>.broadcast();
+  Stream<void> get onReconnected => _reconnectedController.stream;
+
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
 
   /// Stream of real-time match data payloads.
@@ -49,6 +68,10 @@ class KalpixSocketClient {
   Future<void> connect(KalpixSession session) async {
     if (_connected) return;
 
+    _lastSession = session;
+    _reconnectDelay = _initialReconnectDelay;
+    _reconnectTimer?.cancel();
+
     final uri = Uri.parse(config.buildWsUrl(session.token));
     _channel = WebSocketChannel.connect(uri);
 
@@ -64,11 +87,13 @@ class KalpixSocketClient {
         if (!completer.isCompleted) completer.completeError(error);
         _messageController.addError(error);
         _failPending('Connection error: $error');
+        _scheduleReconnect();
       },
       onDone: () {
         _connected = false;
         if (!completer.isCompleted) completer.complete();
         _failPending('WebSocket connection closed');
+        _scheduleReconnect();
       },
     );
 
@@ -82,13 +107,56 @@ class KalpixSocketClient {
   }
 
   /// Disconnect from the WebSocket.
+  ///
+  /// This is an explicit disconnect — automatic reconnection is suppressed.
   Future<void> disconnect() async {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnecting = false;
     _connected = false;
+    _lastSession = null;
     await _subscription?.cancel();
     _subscription = null;
     await _channel?.sink.close();
     _channel = null;
     _failPending('Disconnected');
+  }
+
+  /// Update the session token used for reconnection (e.g. after a refresh).
+  void updateSession(KalpixSession session) {
+    _lastSession = session;
+  }
+
+  /// Schedule a reconnection attempt with exponential backoff.
+  ///
+  /// Only runs if [autoReconnect] is enabled and we have a session to use.
+  void _scheduleReconnect() {
+    if (!autoReconnect) return;
+    if (_reconnecting) return;
+    final session = _lastSession;
+    if (session == null) return;
+    if (session.isExpired && session.isRefreshExpired) return;
+
+    _reconnecting = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(_reconnectDelay, () async {
+      _reconnecting = false;
+      final s = _lastSession;
+      if (s == null || _connected) return;
+
+      try {
+        await connect(s);
+        _reconnectDelay = _initialReconnectDelay;
+        _reconnectedController.add(null);
+      } catch (_) {
+        // Increase backoff: 1s → 2s → 4s → … → 30s max
+        _reconnectDelay = Duration(
+          milliseconds: (_reconnectDelay.inMilliseconds * 2)
+              .clamp(0, _maxReconnectDelay.inMilliseconds),
+        );
+        _scheduleReconnect();
+      }
+    });
   }
 
   /// Join a real-time match by match ID.
@@ -442,9 +510,13 @@ class KalpixSocketClient {
   }
 
   void dispose() {
+    autoReconnect = false;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     disconnect();
     _messageController.close();
     _matchDataController.close();
     _matchPresenceController.close();
+    _reconnectedController.close();
   }
 }

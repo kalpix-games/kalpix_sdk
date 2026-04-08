@@ -5,11 +5,19 @@ import 'kalpix_exception.dart';
 import 'kalpix_session.dart';
 import 'rpc_response.dart';
 
+/// Callback invoked when an authenticated request receives a 401.
+/// Should attempt to refresh the session and return the new one, or null
+/// if refresh is not possible (e.g. refresh token also expired).
+typedef TokenRefreshCallback = Future<KalpixSession?> Function();
+
 /// HTTP client for communicating with the Kalpix backend.
 /// Handles both public (unauthenticated) and authenticated RPC calls.
 class KalpixHttpClient {
   final KalpixConfig config;
   final http.Client _http;
+
+  /// Optional callback for automatic token refresh on 401.
+  TokenRefreshCallback? onTokenRefresh;
 
   KalpixHttpClient({required this.config}) : _http = http.Client();
 
@@ -48,7 +56,28 @@ class KalpixHttpClient {
   }
 
   /// Call an authenticated RPC endpoint (session required).
+  ///
+  /// If the server returns 401 and [onTokenRefresh] is set, the callback is
+  /// invoked to obtain a fresh session. On success the original request is
+  /// retried **once** with the new token.
   Future<Map<String, dynamic>> callAuthenticated(
+    String functionId,
+    Map<String, dynamic> payload,
+    KalpixSession session,
+  ) async {
+    try {
+      return await _doAuthenticated(functionId, payload, session);
+    } on KalpixSessionExpiredException {
+      // Attempt automatic refresh exactly once.
+      final refreshed = await onTokenRefresh?.call();
+      if (refreshed != null) {
+        return _doAuthenticated(functionId, payload, refreshed);
+      }
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> _doAuthenticated(
     String functionId,
     Map<String, dynamic> payload,
     KalpixSession session,
