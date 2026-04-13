@@ -19,7 +19,25 @@ class KalpixHttpClient {
   /// Optional callback for automatic token refresh on 401.
   TokenRefreshCallback? onTokenRefresh;
 
+  /// Session provider set by [KalpixClient] so domain APIs can call
+  /// authenticated RPCs without requiring the caller to pass a session.
+  KalpixSession? Function()? sessionProvider;
+
   KalpixHttpClient({required this.config}) : _http = http.Client();
+
+  /// Call an authenticated RPC using the stored session from [sessionProvider].
+  ///
+  /// Throws [KalpixSessionExpiredException] if no session is available.
+  Future<Map<String, dynamic>> call(
+    String functionId,
+    Map<String, dynamic> payload,
+  ) async {
+    final session = sessionProvider?.call();
+    if (session == null) {
+      throw const KalpixSessionExpiredException();
+    }
+    return callAuthenticated(functionId, payload, session);
+  }
 
   /// Call a public RPC endpoint (no session required).
   Future<Map<String, dynamic>> callPublic(

@@ -127,8 +127,8 @@ class AuthApi {
   }
 
   /// Request account deletion.
-  Future<void> requestAccountDeletion(KalpixSession session) async {
-    await _http.callAuthenticated('auth/request_account_deletion', {}, session);
+  Future<void> requestAccountDeletion() async {
+    await _http.call('auth/request_account_deletion', {});
   }
 
   /// Clear the locally stored session (logout).

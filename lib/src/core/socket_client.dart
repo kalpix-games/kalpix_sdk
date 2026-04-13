@@ -160,7 +160,10 @@ class KalpixSocketClient {
   }
 
   /// Join a real-time match by match ID.
-  Future<KalpixMatch> joinMatch(String matchId) async {
+  ///
+  /// Optional [metadata] is forwarded to the server's `MatchJoinAttempt` handler.
+  /// For 2v2 team selection, pass `{'preferredTeam': '0'}` or `{'preferredTeam': '1'}`.
+  Future<KalpixMatch> joinMatch(String matchId, {Map<String, String>? metadata}) async {
     _assertConnected();
     final cid = _nextCid();
     final completer = Completer<Map<String, dynamic>>();
@@ -169,7 +172,10 @@ class KalpixSocketClient {
     _send({
       'type': 'match_join',
       'cid': cid,
-      'match_join': {'match_id': matchId},
+      'match_join': {
+        'match_id': matchId,
+        if (metadata != null) 'metadata': metadata,
+      },
     });
 
     final result = await completer.future.timeout(
@@ -210,6 +216,42 @@ class KalpixSocketClient {
         'data': base64Encode(data),
       },
     });
+  }
+
+  /// Send a signal to a running match and await the response.
+  ///
+  /// Signals are processed by the match's `MatchSignal` handler on the server.
+  /// Use this for lobby operations like changing seats or querying match state.
+  Future<String> matchSignal({
+    required String matchId,
+    required String data,
+  }) async {
+    _assertConnected();
+    final cid = _nextCid();
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingRequests[cid] = completer;
+
+    _send({
+      'type': 'match_signal',
+      'cid': cid,
+      'match_signal': {
+        'match_id': matchId,
+        'data': data,
+      },
+    });
+
+    final result = await completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        _pendingRequests.remove(cid);
+        throw KalpixSocketException(
+            message: 'matchSignal "$matchId" timed out');
+      },
+    );
+
+    final signalResp =
+        result['match_signal_response'] as Map<String, dynamic>? ?? result;
+    return signalResp['data'] as String? ?? '';
   }
 
   /// Send an RPC call over the WebSocket and await the correlated response.

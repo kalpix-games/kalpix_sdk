@@ -79,6 +79,8 @@ class KalpixClient {
 
     // Wire automatic token refresh: on 401, attempt to refresh session.
     _http.onTokenRefresh = _refreshSession;
+    // Wire session provider so domain APIs don't need session passed explicitly.
+    _http.sessionProvider = () => _session;
   }
 
   /// Convenience factory targeting the production Kalpix server.
@@ -152,7 +154,7 @@ class KalpixClient {
 
   /// Call an arbitrary authenticated RPC (for custom endpoints not covered by the typed APIs).
   Future<Map<String, dynamic>> callRpc(String functionId, Map<String, dynamic> payload) async {
-    return _http.callAuthenticated(functionId, payload, _requireSession());
+    return _http.call(functionId, payload);
   }
 
   /// Call a public RPC (no session required).
@@ -166,8 +168,11 @@ class KalpixClient {
   }
 
   /// Join a real-time match by match ID.
-  Future<KalpixMatch> joinMatch(String matchId) async {
-    return _socket.joinMatch(matchId);
+  ///
+  /// Optional [metadata] is forwarded to the server's `MatchJoinAttempt`.
+  /// For 2v2 team selection, pass `{'preferredTeam': '0'}` or `{'preferredTeam': '1'}`.
+  Future<KalpixMatch> joinMatch(String matchId, {Map<String, String>? metadata}) async {
+    return _socket.joinMatch(matchId, metadata: metadata);
   }
 
   /// Leave a real-time match.
@@ -182,6 +187,17 @@ class KalpixClient {
     required Uint8List data,
   }) {
     _socket.sendMatchData(matchId: matchId, opCode: opCode, data: data);
+  }
+
+  /// Send a signal to a running match and await the response.
+  ///
+  /// Use for lobby operations like changing seats, adding bots, etc.
+  /// The [data] should be a JSON string with an "action" field.
+  Future<String> matchSignal({
+    required String matchId,
+    required String data,
+  }) {
+    return _socket.matchSignal(matchId: matchId, data: data);
   }
 
   /// Attempt to refresh the current session using the refresh token.
