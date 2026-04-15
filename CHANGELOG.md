@@ -1,4 +1,4 @@
-## 0.4.0
+## 0.4.1
 
 - Initial public release.
 - `KalpixClient` — single entry point with `production()` factory.

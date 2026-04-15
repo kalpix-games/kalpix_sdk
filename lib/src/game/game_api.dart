@@ -82,11 +82,13 @@ class GameApi {
     required String gameId,
     required String period,
     int limit = 50,
+    String? cursor,
   }) async {
     return _http.call('game/get_friends_leaderboard', {
       'gameId': gameId,
       'period': period,
       'limit': limit,
+      if (cursor != null) 'cursor': cursor,
     });
   }
 
