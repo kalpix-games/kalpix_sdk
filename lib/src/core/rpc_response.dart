@@ -17,7 +17,7 @@ class RpcResponse {
     required this.raw,
   });
 
-  bool get isError => !success;
+  bool get isError => !success && errorCode != null;
 
   bool get requiresAuth => errorCode == KalpixException.authentication;
 
