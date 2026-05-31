@@ -1,3 +1,14 @@
+## 0.5.0
+
+- **Leaderboards are now Glicko-2 skill ratings.** Removed the legacy score-based
+  period model.
+- **BREAKING:** `GameApi.getLeaderboard`, `getLeaderboardAroundPlayer`, and
+  `getFriendsLeaderboard` no longer take a `period` argument — each game has a
+  single rating board, resolved server-side from `gameId`.
+- Added `GameApi.getRating(gameId, {userId})` for a player's Glicko-2 rating
+  (rating, deviation, provisional/ranked flags, peak, leaderboard rank).
+- `KalpixClient.local()` now defaults to `192.168.31.243:7350`.
+
 ## 0.4.2
 
 - Initial public release.

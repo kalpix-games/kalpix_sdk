@@ -96,11 +96,12 @@ class KalpixClient {
 
   /// Convenience factory targeting a local development server.
   ///
-  /// Example:
+  /// Defaults to the LAN dev server; override host/port as needed:
   /// ```dart
-  /// final client = KalpixClient.local(host: '192.168.31.243', port: 8080);
+  /// final client = KalpixClient.local(); // 192.168.31.243:7350
+  /// final client = KalpixClient.local(host: '10.0.2.2', port: 7350);
   /// ```
-  factory KalpixClient.local({String host = 'localhost', int port = 80}) {
+  factory KalpixClient.local({String host = '192.168.31.243', int port = 7350}) {
     return KalpixClient(
       config: KalpixConfig(
         host: host,

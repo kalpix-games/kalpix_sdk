@@ -49,50 +49,44 @@ class GameApi {
     return _http.call('game/get_rules', {'gameId': gameId});
   }
 
-  /// Get leaderboard entries for a game + period.
+  /// Get the rating leaderboard for a game.
   Future<Map<String, dynamic>> getLeaderboard({
     required String gameId,
-    required String period,
     int limit = 20,
     String? cursor,
   }) async {
     return _http.call('game/get_leaderboard', {
       'gameId': gameId,
-      'period': period,
       'limit': limit,
       if (cursor != null) 'cursor': cursor,
     });
   }
 
-  /// Get leaderboard entries centered around the current player ("Find Me").
+  /// Get rating leaderboard entries centered around the current player ("Find Me").
   Future<Map<String, dynamic>> getLeaderboardAroundPlayer({
     required String gameId,
-    required String period,
     int limit = 10,
   }) async {
     return _http.call('game/get_leaderboard_around_player', {
       'gameId': gameId,
-      'period': period,
       'limit': limit,
     });
   }
 
-  /// Get friends-only leaderboard.
+  /// Get the friends-only rating leaderboard.
   Future<Map<String, dynamic>> getFriendsLeaderboard({
     required String gameId,
-    required String period,
     int limit = 50,
     String? cursor,
   }) async {
     return _http.call('game/get_friends_leaderboard', {
       'gameId': gameId,
-      'period': period,
       'limit': limit,
       if (cursor != null) 'cursor': cursor,
     });
   }
 
-  /// List available leaderboard periods for a game.
+  /// List available leaderboards for a game.
   Future<Map<String, dynamic>> listLeaderboards({required String gameId}) async {
     return _http.call('game/list_leaderboards', {'gameId': gameId});
   }
@@ -103,6 +97,15 @@ class GameApi {
   /// Pass [userId] to view another player's public stats.
   Future<Map<String, dynamic>> getPlayerStats({required String gameId, String? userId}) async {
     return _http.call('game/get_stats', {
+      'gameId': gameId,
+      if (userId != null) 'userId': userId,
+    });
+  }
+
+  /// Get a player's Glicko-2 rating for a game (rating, deviation, provisional/
+  /// ranked flags, peak, leaderboard rank). Defaults to the current user.
+  Future<Map<String, dynamic>> getRating({required String gameId, String? userId}) async {
+    return _http.call('game/get_rating', {
       'gameId': gameId,
       if (userId != null) 'userId': userId,
     });
