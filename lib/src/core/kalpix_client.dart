@@ -57,6 +57,10 @@ class KalpixClient {
   /// Stream of real-time match data payloads.
   Stream<KalpixMatchData> get onMatchData => _socket.onMatchData;
 
+  /// Emits true when the socket connects, false when it drops.
+  Stream<bool> get onConnectionStateChanged =>
+      _socket.onConnectionStateChanged;
+
   /// Stream of match presence events (players joining/leaving).
   Stream<KalpixMatchPresenceEvent> get onMatchPresence =>
       _socket.onMatchPresence;

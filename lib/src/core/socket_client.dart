@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'ws_connector.dart';
 import 'kalpix_config.dart';
 import 'kalpix_exception.dart';
 import 'kalpix_session.dart';
@@ -47,9 +48,17 @@ class KalpixSocketClient {
   /// Whether we are in the middle of a reconnection attempt.
   bool _reconnecting = false;
 
+  /// Guards overlapping connect() calls (app reconnect + SDK backoff can race).
+  bool _isConnecting = false;
+
   /// Fired when a reconnection attempt succeeds.
   final _reconnectedController = StreamController<void>.broadcast();
   Stream<void> get onReconnected => _reconnectedController.stream;
+
+  /// Emits true when the socket connects, false when it drops.
+  final _connectionStateController = StreamController<bool>.broadcast();
+  Stream<bool> get onConnectionStateChanged =>
+      _connectionStateController.stream;
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
 
@@ -66,44 +75,51 @@ class KalpixSocketClient {
 
   /// Connect to the Kalpix WebSocket using the provided session token.
   Future<void> connect(KalpixSession session) async {
-    if (_connected) return;
+    if (_connected || _isConnecting) return;
+    _isConnecting = true;
 
     _lastSession = session;
-    _reconnectDelay = _initialReconnectDelay;
     _reconnectTimer?.cancel();
 
-    final uri = Uri.parse(config.buildWsUrl(session.token));
-    _channel = WebSocketChannel.connect(uri);
+    try {
+      final uri = Uri.parse(config.buildWsUrl(session.token));
+      // pingInterval makes dart:io send protocol-level pings and close a
+      // half-open socket on a missed pong (~10s) — firing onDone below.
+      final channel =
+          connectWebSocket(uri, pingInterval: const Duration(seconds: 10));
 
-    final completer = Completer<void>();
+      // Await the handshake here so connect failures are caught, not uncaught async.
+      await channel.ready.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw const KalpixSocketException(
+          message: 'WebSocket connection timed out',
+        ),
+      );
 
-    _subscription = _channel!.stream.listen(
-      (raw) {
-        if (!completer.isCompleted) completer.complete();
-        _handleIncoming(raw as String);
-      },
-      onError: (error) {
-        _connected = false;
-        if (!completer.isCompleted) completer.completeError(error);
-        _messageController.addError(error);
-        _failPending('Connection error: $error');
-        _scheduleReconnect();
-      },
-      onDone: () {
-        _connected = false;
-        if (!completer.isCompleted) completer.complete();
-        _failPending('WebSocket connection closed');
-        _scheduleReconnect();
-      },
-    );
+      _channel = channel;
+      _subscription = channel.stream.listen(
+        (raw) => _handleIncoming(raw as String),
+        onError: (error) {
+          _setConnected(false);
+          _failPending('Connection error: $error');
+          _scheduleReconnect();
+        },
+        onDone: () {
+          _setConnected(false);
+          _failPending('WebSocket connection closed');
+          _scheduleReconnect();
+        },
+      );
 
-    await completer.future.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () => throw const KalpixSocketException(
-          message: 'WebSocket connection timed out'),
-    );
-
-    _connected = true;
+      _reconnectDelay = _initialReconnectDelay;
+      _setConnected(true);
+    } catch (e) {
+      _setConnected(false);
+      _scheduleReconnect();
+      rethrow;
+    } finally {
+      _isConnecting = false;
+    }
   }
 
   /// Disconnect from the WebSocket.
@@ -113,7 +129,7 @@ class KalpixSocketClient {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _reconnecting = false;
-    _connected = false;
+    _setConnected(false);
     _lastSession = null;
     await _subscription?.cancel();
     _subscription = null;
@@ -544,6 +560,13 @@ class KalpixSocketClient {
 
   String _nextCid() => (++_cidCounter).toString();
 
+  /// Set the connected flag and notify listeners on change.
+  void _setConnected(bool value) {
+    if (_connected == value) return;
+    _connected = value;
+    _connectionStateController.add(value);
+  }
+
   void _failPending(String reason) {
     for (final completer in _pendingRequests.values) {
       completer.completeError(KalpixSocketException(message: reason));
@@ -560,5 +583,6 @@ class KalpixSocketClient {
     _matchDataController.close();
     _matchPresenceController.close();
     _reconnectedController.close();
+    _connectionStateController.close();
   }
 }
